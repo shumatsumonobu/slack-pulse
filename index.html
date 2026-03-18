@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Slack Communication Graph</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600&family=Noto+Sans+JP:wght@400;600&display=swap" rel="stylesheet">
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0e1a;
+      color: #c9d1d9;
+      font-family: 'Space Grotesk', 'Noto Sans JP', sans-serif;
+      overflow: hidden;
+    }
+    .intro {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 20;
+      pointer-events: none;
+      opacity: 1;
+      transition: opacity 1.5s ease-out;
+    }
+    .intro.fade-out {
+      opacity: 0;
+    }
+    .intro-title {
+      font-size: 28px;
+      font-weight: 400;
+      color: #ffffff;
+      letter-spacing: 4px;
+      margin-bottom: 12px;
+    }
+    .intro-sub {
+      display: flex;
+      gap: 32px;
+      margin-top: 4px;
+    }
+    .intro-item {
+      font-size: 14px;
+      color: #e6edf3;
+      opacity: 0.7;
+      letter-spacing: 0.5px;
+    }
+    svg { display: block; }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.4; }
+      50% { opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+  <div class="intro" id="intro">
+    <div class="intro-title">チームの見えない繋がりを、光で描く</div>
+    <div class="intro-sub">
+      <span class="intro-item">Slackのやり取りをリアルタイムに可視化</span>
+    </div>
+  </div>
+  <svg id="graph"></svg>
+
+  <script>
+    // イントロをフェードアウト
+    setTimeout(() => {
+      const intro = document.getElementById("intro");
+      intro.classList.add("fade-out");
+      setTimeout(() => intro.remove(), 1500);
+    }, 5000);
+
+    let width = window.innerWidth;
+    let height = window.innerHeight;
+
+    const svg = d3.select("#graph")
+      .attr("width", width)
+      .attr("height", height);
+
+    let _simulation = null;
+    let resizeTimer;
+    window.addEventListener("resize", () => {
+      width = window.innerWidth;
+      height = window.innerHeight;
+      svg.attr("width", width).attr("height", height);
+      if (_simulation) {
+        _simulation.force("center", d3.forceCenter(width / 2, height / 2));
+        _simulation.alpha(0.1).restart();
+      }
+    });
+
+    // グロー効果のフィルター
+    const defs = svg.append("defs");
+    const filter = defs.append("filter").attr("id", "glow");
+    filter.append("feGaussianBlur").attr("stdDeviation", "4").attr("result", "blur");
+    filter.append("feMerge")
+      .selectAll("feMergeNode")
+      .data(["blur", "SourceGraphic"])
+      .join("feMergeNode")
+      .attr("in", d => d);
+
+    // パーティクル用の強いグロー
+    const glowStrong = defs.append("filter").attr("id", "glow-strong").attr("x", "-100%").attr("y", "-100%").attr("width", "300%").attr("height", "300%");
+    glowStrong.append("feGaussianBlur").attr("stdDeviation", "2").attr("result", "blur1");
+    const merge = glowStrong.append("feMerge");
+    merge.append("feMergeNode").attr("in", "blur1");
+    merge.append("feMergeNode").attr("in", "SourceGraphic");
+
+    // パーティクル用のグラデーション（中心が白、外側が青）
+    const radGrad = defs.append("radialGradient").attr("id", "particle-glow");
+    radGrad.append("stop").attr("offset", "0%").attr("stop-color", "#ffffff").attr("stop-opacity", 1);
+    radGrad.append("stop").attr("offset", "50%").attr("stop-color", "#ffffff").attr("stop-opacity", 0.6);
+    radGrad.append("stop").attr("offset", "100%").attr("stop-color", "#ffffff").attr("stop-opacity", 0);
+
+    const g = svg.append("g");
+
+    // ズーム（スムーズ + 細かい刻み）
+    const zoom = d3.zoom()
+      .scaleExtent([0.2, 8])
+      .wheelDelta(e => -e.deltaY * 0.002)  // 刻みを細かく
+      .on("zoom", (e) => g.attr("transform", e.transform));
+    svg.call(zoom)
+      .on("dblclick.zoom", null);  // ダブルクリックズーム無効化
+    // CSS transitionでスムーズに
+    g.style("transition", "transform 0.1s ease-out");
+
+    d3.json("graph-data.json").catch(() => d3.json("graph-data.sample.json")).then(data => {
+      if (!data || !data.nodes.length) {
+        svg.append("text")
+          .attr("x", width / 2)
+          .attr("y", height / 2)
+          .attr("text-anchor", "middle")
+          .attr("fill", "#8b949e")
+          .text("graph-data.json が見つかりません。npm run fetch を先に実行してください。");
+        return;
+      }
+
+      // スコアの範囲を計算
+      const maxScore = d3.max(data.edges, d => d.score);
+      const linkWidth = d3.scaleLinear().domain([1, maxScore]).range([1, 8]);
+      const linkOpacity = d3.scaleLinear().domain([1, maxScore]).range([0.15, 0.6]);
+
+      // ノードの接続数でサイズを決める
+      const connectionCount = {};
+      data.edges.forEach(e => {
+        connectionCount[e.source] = (connectionCount[e.source] || 0) + e.score;
+        connectionCount[e.target] = (connectionCount[e.target] || 0) + e.score;
+      });
+      const maxConn = Math.max(...Object.values(connectionCount), 1);
+      const nodeRadius = d3.scalePow().exponent(0.6).domain([1, maxConn]).range([4, 40]);
+
+      // カラーパレット
+      // サイバーパンクカラー
+      const cyberColors = [
+        "#ff2a6d", // ホットピンク
+        "#05d9e8", // シアン
+        "#d300c5", // マゼンタ
+        "#7b2ff7", // パープル
+        "#01ffc3", // ライム
+        "#ff6e27", // ネオンオレンジ
+        "#f5e642", // エレクトリックイエロー
+        "#00b3ff", // ブライトブルー
+        "#ff4ecd", // ピンク
+        "#39ff14", // ネオングリーン
+      ];
+      const color = d3.scaleOrdinal(cyberColors);
+
+      const simulation = _simulation = d3.forceSimulation(data.nodes)
+        .force("link", d3.forceLink(data.edges)
+          .id(d => d.id)
+          .distance(d => 80 - linkWidth(d.score) * 5)
+        )
+        .force("charge", d3.forceManyBody().strength(-150))
+        .force("center", d3.forceCenter(width / 2, height / 2))
+        .force("collision", d3.forceCollide().radius(d => nodeRadius(connectionCount[d.id] || 1) + 5));
+
+      // エッジ描画
+      const link = g.append("g")
+        .selectAll("line")
+        .data(data.edges)
+        .join("line")
+        .attr("stroke", "#58a6ff")
+        .attr("stroke-width", 0.5)
+        .attr("stroke-opacity", 0.15);
+
+      // ノード描画
+      const node = g.append("g")
+        .selectAll("circle")
+        .data(data.nodes)
+        .join("circle")
+        .attr("r", d => nodeRadius(connectionCount[d.id] || 1))
+        .attr("fill", (d, i) => color(i))
+        .attr("stroke", "none")
+        .style("cursor", "pointer")
+        .style("filter", "url(#glow)")
+        .call(d3.drag()
+          .on("start", (e, d) => {
+            if (!e.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x; d.fy = d.y;
+          })
+          .on("drag", (e, d) => { d.fx = e.x; d.fy = e.y; })
+          .on("end", (e, d) => {
+            if (!e.active) simulation.alphaTarget(0);
+            d.fx = null; d.fy = null;
+          })
+        );
+
+      // ラベル描画
+      const label = g.append("g")
+        .selectAll("text")
+        .data(data.nodes)
+        .join("text")
+        .text(d => {
+          const name = d.name || d.id;
+          return name.length > 6 ? name.slice(0, 6) + "…" : name;
+        })
+        .attr("font-size", 12)
+        .attr("font-weight", "400")
+        .attr("fill", "#ffffff")
+        .attr("text-anchor", "middle")
+        .attr("dy", d => -nodeRadius(connectionCount[d.id] || 1) - 8)
+        .style("pointer-events", "none");
+
+      // ホバーでノード強調（繋がってるエッジを光らせる）
+      node.on("mouseover", (e, d) => {
+        link.attr("stroke-opacity", l =>
+          (l.source.id === d.id || l.target.id === d.id) ? 0.5 : 0.05
+        );
+      })
+      .on("mouseout", () => {
+        link.attr("stroke-opacity", 0.15);
+      });
+
+      // パーティクル（粒子が線上を流れる）
+      const particleLayer = g.append("g");
+      const particles = [];
+
+      // スコアに応じた粒子数を生成（密なほど多い）
+      const particleCount = d3.scalePow().exponent(1.5).domain([1, maxScore]).range([1, 8]);
+      data.edges.forEach(edge => {
+        const count = Math.round(particleCount(edge.score));
+        for (let i = 0; i < count; i++) {
+          particles.push({
+            edge,
+            t: Math.random(),                          // 0-1 の位置
+            speed: (0.0005 + (edge.score / maxScore) * 0.012) * (0.7 + Math.random() * 0.6),  // 密なほど速い、差を大きく
+            size: 1.5 + Math.random() * 2,
+          });
+        }
+      });
+
+      const particleDots = particleLayer.selectAll("circle")
+        .data(particles)
+        .join("circle")
+        .attr("r", d => d.size * 1.2)
+        .attr("fill", "url(#particle-glow)")
+        .attr("opacity", 0.9)
+        .style("filter", "url(#glow-strong)");
+
+      function animateParticles() {
+        particles.forEach(p => {
+          p.t += p.speed;
+          if (p.t > 1) p.t -= 1;
+        });
+
+        particleDots
+          .attr("cx", d => {
+            const s = d.edge.source, t = d.edge.target;
+            return s.x + (t.x - s.x) * d.t;
+          })
+          .attr("cy", d => {
+            const s = d.edge.source, t = d.edge.target;
+            return s.y + (t.y - s.y) * d.t;
+          });
+
+        requestAnimationFrame(animateParticles);
+      }
+      animateParticles();
+
+      // ノードの呼吸アニメーション（ランダムにふわふわ光る）
+      function breathe() {
+        node.transition()
+          .duration(() => 1500 + Math.random() * 2000)
+          .attr("opacity", () => 0.6 + Math.random() * 0.4)
+          .on("end", function () {
+            d3.select(this).transition()
+              .duration(() => 1500 + Math.random() * 2000)
+              .attr("opacity", 1)
+              .on("end", breathe.bind(null));
+          });
+      }
+      breathe();
+
+      // エッジもゆっくり明滅
+      function edgePulse() {
+        link.transition()
+          .duration(() => 2000 + Math.random() * 3000)
+          .attr("stroke-opacity", d => linkOpacity(d.score) * (0.5 + Math.random() * 0.5))
+          .transition()
+          .duration(() => 2000 + Math.random() * 3000)
+          .attr("stroke-opacity", d => linkOpacity(d.score))
+          .on("end", edgePulse);
+      }
+      edgePulse();
+
+      // 初期配置が安定したらウィンドウにフィットさせる
+      let fitted = false;
+      simulation.on("end", () => {
+        if (fitted) return;
+        fitted = true;
+        // 全ノードのバウンディングボックスを計算
+        const xs = data.nodes.map(d => d.x);
+        const ys = data.nodes.map(d => d.y);
+        const x0 = Math.min(...xs) - 50, x1 = Math.max(...xs) + 50;
+        const y0 = Math.min(...ys) - 50, y1 = Math.max(...ys) + 50;
+        const bw = x1 - x0, bh = y1 - y0;
+        const scale = Math.min(width / bw, height / bh) * 0.85;
+        const tx = (width - bw * scale) / 2 - x0 * scale;
+        const ty = (height - bh * scale) / 2 - y0 * scale;
+        svg.transition().duration(800).call(
+          zoom.transform,
+          d3.zoomIdentity.translate(tx, ty).scale(scale)
+        );
+      });
+
+      // シミュレーションを完全に止めない（ゆるく動き続ける）
+      simulation.alphaDecay(0.005); // デフォルト0.0228 → ゆっくり冷める
+      setInterval(() => {
+        // ランダムな小さい揺れを定期的に加える
+        data.nodes.forEach(n => {
+          n.vx += (Math.random() - 0.5) * 0.5;
+          n.vy += (Math.random() - 0.5) * 0.5;
+        });
+        simulation.alpha(0.05).restart();
+      }, 3000);
+
+      // シミュレーション更新（ウィンドウ内に収める）
+      const pad = 40;
+      simulation.on("tick", () => {
+        data.nodes.forEach(d => {
+          const r = nodeRadius(connectionCount[d.id] || 1);
+          d.x = Math.max(pad + r, Math.min(width - pad - r, d.x));
+          d.y = Math.max(pad + r, Math.min(height - pad - r, d.y));
+        });
+
+        link
+          .attr("x1", d => d.source.x).attr("y1", d => d.source.y)
+          .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+        node.attr("cx", d => d.x).attr("cy", d => d.y);
+        label.attr("x", d => d.x).attr("y", d => d.y);
+      });
+    });
+  </script>
+</body>
+</html>

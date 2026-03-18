@@ -1,0 +1,14 @@
+{
+  "name": "slack-pulse",
+  "private": true,
+  "scripts": {
+    "fetch": "node fetch-data.js",
+    "dev": "npx serve ."
+  },
+  "dependencies": {
+    "@slack/web-api": "^7.0.0"
+  },
+  "devDependencies": {
+    "dotenv": "^16.0.0"
+  }
+}

@@ -60,10 +60,18 @@ npm run fetch
 ### 可視化
 
 ```bash
-npx serve .
+npm run dev
 ```
 
-ブラウザで表示されたURLを開く
+ブラウザで http://localhost:3000 を開く
+
+### デモ動画の録画
+
+```bash
+npm run record
+```
+
+`screenshots/demo.webm` に1920×1080の15秒動画が出力される（Playwright + Chromium）
 
 ## スコア算出
 
@@ -75,7 +83,9 @@ npx serve .
 
 ## 技術構成
 
-D3.js force-directed graph / Slack Web API / Node.js
+- **可視化**: D3.js force-directed graph
+- **データ取得**: Slack Web API / Node.js
+- **録画**: Playwright（Chromium headless）
 
 ## Author
 

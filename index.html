@@ -68,12 +68,13 @@
   <svg id="graph"></svg>
 
   <script>
-    // イントロをフェードアウト
-    setTimeout(() => {
+    // イントロをフェードアウト（グラフ準備後に呼ばれる）
+    function fadeOutIntro() {
       const intro = document.getElementById("intro");
+      if (!intro) return;
       intro.classList.add("fade-out");
       setTimeout(() => intro.remove(), 1500);
-    }, 5000);
+    }
 
     let width = window.innerWidth;
     let height = window.innerHeight;
@@ -83,14 +84,15 @@
       .attr("height", height);
 
     let _simulation = null;
-    let resizeTimer;
+    let _fitAll = null;  // remap + fit の共通関数
     window.addEventListener("resize", () => {
       width = window.innerWidth;
       height = window.innerHeight;
       svg.attr("width", width).attr("height", height);
-      if (_simulation) {
+      if (_simulation && _fitAll) {
         _simulation.force("center", d3.forceCenter(width / 2, height / 2));
-        _simulation.alpha(0.1).restart();
+        _simulation.alpha(0.05).restart();
+        setTimeout(() => _fitAll(), 500);
       }
     });
 
@@ -118,16 +120,19 @@
     radGrad.append("stop").attr("offset", "100%").attr("stop-color", "#ffffff").attr("stop-opacity", 0);
 
     const g = svg.append("g");
+    let currentTransform = d3.zoomIdentity;
 
     // ズーム（スムーズ + 細かい刻み）
     const zoom = d3.zoom()
       .scaleExtent([0.2, 8])
       .wheelDelta(e => -e.deltaY * 0.002)  // 刻みを細かく
-      .on("zoom", (e) => g.attr("transform", e.transform));
+      .on("zoom", (e) => {
+        g.attr("transform", e.transform);
+        currentTransform = e.transform;
+        if (typeof label !== "undefined") updateLabels();
+      });
     svg.call(zoom)
       .on("dblclick.zoom", null);  // ダブルクリックズーム無効化
-    // CSS transitionでスムーズに
-    g.style("transition", "transform 0.1s ease-out");
 
     d3.json("graph-data.json").catch(() => d3.json("graph-data.sample.json")).then(data => {
       if (!data || !data.nodes.length) {
@@ -140,10 +145,22 @@
         return;
       }
 
+      // レイアウト定数（ウィンドウとノード数から動的に算出）
+      const idealSpacing = Math.sqrt((width * height) / data.nodes.length);
+      const CHARGE_STRENGTH = -(idealSpacing * 3);  // ノード間の反発力
+      const LINK_DISTANCE = idealSpacing * 0.5;     // エッジの自然長
+      const COLLISION_SCALE = 2.5;                  // ノード半径に対する衝突半径の倍率
+      const FIT_FILL = 1.0;              // 画面に対するフィット率（1.0 = 画面いっぱい）
+      const FIT_MAX_SCALE = Infinity;    // ズーム上限なし（画面にフィットさせる）
+      const EDGE_OPACITY_MIN = 0.25;      // エッジの最低透明度
+      const EDGE_OPACITY_MAX = 0.6;       // エッジの最大透明度
+      const LABEL_SIZE = 12;              // ラベルのフォントサイズ
+      const LABEL_GAP = 6;               // ラベルとノードの間隔
+
       // スコアの範囲を計算
       const maxScore = d3.max(data.edges, d => d.score);
       const linkWidth = d3.scaleLinear().domain([1, maxScore]).range([1, 8]);
-      const linkOpacity = d3.scaleLinear().domain([1, maxScore]).range([0.15, 0.6]);
+      const linkOpacity = d3.scaleLinear().domain([1, maxScore]).range([EDGE_OPACITY_MIN, EDGE_OPACITY_MAX]);
 
       // ノードの接続数でサイズを決める
       const connectionCount = {};
@@ -152,7 +169,7 @@
         connectionCount[e.target] = (connectionCount[e.target] || 0) + e.score;
       });
       const maxConn = Math.max(...Object.values(connectionCount), 1);
-      const nodeRadius = d3.scalePow().exponent(0.6).domain([1, maxConn]).range([4, 40]);
+      const nodeRadius = d3.scalePow().exponent(0.7).domain([1, maxConn]).range([3, 60]);
 
       // カラーパレット
       // サイバーパンクカラー
@@ -173,11 +190,11 @@
       const simulation = _simulation = d3.forceSimulation(data.nodes)
         .force("link", d3.forceLink(data.edges)
           .id(d => d.id)
-          .distance(d => 80 - linkWidth(d.score) * 5)
+          .distance(LINK_DISTANCE)
         )
-        .force("charge", d3.forceManyBody().strength(-300))
+        .force("charge", d3.forceManyBody().strength(CHARGE_STRENGTH))
         .force("center", d3.forceCenter(width / 2, height / 2))
-        .force("collision", d3.forceCollide().radius(d => nodeRadius(connectionCount[d.id] || 1) + 15));
+        .force("collision", d3.forceCollide().radius(d => nodeRadius(connectionCount[d.id] || 1) * COLLISION_SCALE).strength(1));
 
       // エッジ描画
       const link = g.append("g")
@@ -186,7 +203,7 @@
         .join("line")
         .attr("stroke", "#58a6ff")
         .attr("stroke-width", 0.5)
-        .attr("stroke-opacity", 0.15);
+        .attr("stroke-opacity", d => linkOpacity(d.score));
 
       // ノード描画
       const node = g.append("g")
@@ -210,20 +227,19 @@
           })
         );
 
-      // ラベル描画
-      const label = g.append("g")
-        .selectAll("text")
+      // ラベル描画（ノードと同じgグループ内 → 同時に描画される）
+      const label = g.append("g").selectAll("text")
         .data(data.nodes)
         .join("text")
         .text(d => {
           const name = d.name || d.id;
           return name.length > 6 ? name.slice(0, 6) + "…" : name;
         })
-        .attr("font-size", 12)
+        .attr("font-size", LABEL_SIZE)
         .attr("font-weight", "400")
         .attr("fill", "#ffffff")
         .attr("text-anchor", "middle")
-        .attr("dy", d => -nodeRadius(connectionCount[d.id] || 1) - 8)
+        .attr("dy", 0)
         .style("pointer-events", "none");
 
       // ホバーでノード強調（繋がってるエッジを光らせる）
@@ -233,7 +249,7 @@
         );
       })
       .on("mouseout", () => {
-        link.attr("stroke-opacity", 0.15);
+        link.attr("stroke-opacity", d => linkOpacity(d.score));
       });
 
       // パーティクル（粒子が線上を流れる）
@@ -280,9 +296,7 @@
 
         requestAnimationFrame(animateParticles);
       }
-      animateParticles();
-
-      // ノードの呼吸アニメーション（ランダムにふわふわ光る）
+      // アニメーション定義（開始はfitAll後）
       function breathe() {
         node.transition()
           .duration(() => 1500 + Math.random() * 2000)
@@ -294,9 +308,6 @@
               .on("end", breathe.bind(null));
           });
       }
-      breathe();
-
-      // エッジもゆっくり明滅
       function edgePulse() {
         link.transition()
           .duration(() => 2000 + Math.random() * 3000)
@@ -306,53 +317,140 @@
           .attr("stroke-opacity", d => linkOpacity(d.score))
           .on("end", edgePulse);
       }
-      edgePulse();
 
-      // 初期配置が安定したらウィンドウにフィットさせる
-      let fitted = false;
-      simulation.on("end", () => {
-        if (fitted) return;
-        fitted = true;
-        // 全ノードのバウンディングボックスを計算
+      // 全ノードを画面にフィットさせる
+      function fitToScreen(animate = true) {
+        // ノード半径を含むバウンディングボックス（データ座標）
+        const nr = d => nodeRadius(connectionCount[d.id] || 1);
+        const x0 = Math.min(...data.nodes.map(d => d.x - nr(d)));
+        const x1 = Math.max(...data.nodes.map(d => d.x + nr(d)));
+        const y0 = Math.min(...data.nodes.map(d => d.y - nr(d)));
+        const y1 = Math.max(...data.nodes.map(d => d.y + nr(d)));
+        const bw = x1 - x0 || 1, bh = y1 - y0 || 1;
+
+        // スクリーン余白（最小限）
+        const marginTop = LABEL_SIZE + LABEL_GAP;
+        const marginOther = 5;
+        const availW = width - marginOther * 2;
+        const availH = height - marginTop - marginOther;
+
+        const scale = Math.min(availW / bw, availH / bh, FIT_MAX_SCALE) * FIT_FILL;
+        const tx = marginOther + (availW - bw * scale) / 2 - x0 * scale;
+        const ty = marginTop + (availH - bh * scale) / 2 - y0 * scale;
+
+        console.log("[fitToScreen]", {
+          viewport: { width, height },
+          bbox: { x0: x0.toFixed(0), x1: x1.toFixed(0), y0: y0.toFixed(0), y1: y1.toFixed(0), bw: bw.toFixed(0), bh: bh.toFixed(0) },
+          avail: { availW: availW.toFixed(0), availH: availH.toFixed(0) },
+          scales: { scaleX: (availW / bw).toFixed(3), scaleY: (availH / bh).toFixed(3), final: scale.toFixed(3) },
+          transform: { tx: tx.toFixed(0), ty: ty.toFixed(0), scale: scale.toFixed(3) },
+          fillPercent: { x: ((bw * scale / availW) * 100).toFixed(1) + "%", y: ((bh * scale / availH) * 100).toFixed(1) + "%" }
+        });
+
+        if (animate) {
+          svg.transition().duration(800).call(
+            zoom.transform,
+            d3.zoomIdentity.translate(tx, ty).scale(scale)
+          );
+        } else {
+          svg.call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+        }
+      }
+      // シミュレーション完了後にノード座標を画面アスペクト比に合わせてストレッチ
+      function remapToViewport() {
         const xs = data.nodes.map(d => d.x);
         const ys = data.nodes.map(d => d.y);
-        const x0 = Math.min(...xs) - 50, x1 = Math.max(...xs) + 50;
-        const y0 = Math.min(...ys) - 50, y1 = Math.max(...ys) + 50;
-        const bw = x1 - x0, bh = y1 - y0;
-        const scale = Math.min(width / bw, height / bh) * 0.85;
-        const tx = (width - bw * scale) / 2 - x0 * scale;
-        const ty = (height - bh * scale) / 2 - y0 * scale;
-        svg.transition().duration(800).call(
-          zoom.transform,
-          d3.zoomIdentity.translate(tx, ty).scale(scale)
-        );
-      });
+        const minX = Math.min(...xs), maxX = Math.max(...xs);
+        const minY = Math.min(...ys), maxY = Math.max(...ys);
+        const dataW = maxX - minX || 1;
+        const dataH = maxY - minY || 1;
+        const dataCx = (minX + maxX) / 2;
+        const dataCy = (minY + maxY) / 2;
 
-      // シミュレーションを完全に止めない（ゆるく動き続ける）
-      simulation.alphaDecay(0.005); // デフォルト0.0228 → ゆっくり冷める
-      setInterval(() => {
-        // ランダムな小さい揺れを定期的に加える
-        data.nodes.forEach(n => {
-          n.vx += (Math.random() - 0.5) * 0.5;
-          n.vy += (Math.random() - 0.5) * 0.5;
+        // fitToScreenと同じ利用可能領域のアスペクト比を使う
+        const marginTop = LABEL_SIZE + LABEL_GAP;
+        const marginOther = 5;
+        const availW = width - marginOther * 2;
+        const availH = height - marginTop - marginOther;
+
+        const dataAspect = dataW / dataH;
+        const viewAspect = availW / availH;
+
+        let sx = 1, sy = 1;
+        if (viewAspect > dataAspect) {
+          sx = viewAspect / dataAspect;
+        } else {
+          sy = dataAspect / viewAspect;
+        }
+
+        console.log("[remapToViewport]", {
+          before: { dataW: dataW.toFixed(0), dataH: dataH.toFixed(0), dataAspect: dataAspect.toFixed(3) },
+          target: { availW: availW.toFixed(0), availH: availH.toFixed(0), viewAspect: viewAspect.toFixed(3) },
+          stretch: { sx: sx.toFixed(3), sy: sy.toFixed(3) }
         });
-        simulation.alpha(0.05).restart();
-      }, 3000);
 
-      // シミュレーション更新（ウィンドウ内に収める）
-      const pad = 40;
-      simulation.on("tick", () => {
         data.nodes.forEach(d => {
-          const r = nodeRadius(connectionCount[d.id] || 1);
-          d.x = Math.max(pad + r, Math.min(width - pad - r, d.x));
-          d.y = Math.max(pad + r, Math.min(height - pad - r, d.y));
+          d.x = dataCx + (d.x - dataCx) * sx;
+          d.y = dataCy + (d.y - dataCy) * sy;
         });
+      }
 
+      // DOM更新（tick handler と同じ処理）
+      function updateDOM() {
         link
           .attr("x1", d => d.source.x).attr("y1", d => d.source.y)
           .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
         node.attr("cx", d => d.x).attr("cy", d => d.y);
-        label.attr("x", d => d.x).attr("y", d => d.y);
+        updateLabels();
+      }
+
+      // 共通: 停止 → リマップ → フィット（zoom確定） → DOM更新
+      function fitAll(animate = true) {
+        simulation.stop();
+        remapToViewport();
+        fitToScreen(animate);  // zoom変換を先に確定（currentTransformが正しくなる）
+        updateDOM();           // 確定したcurrentTransformでラベル配置
+      }
+      _fitAll = fitAll;
+
+      // レイアウトを同期計算（一瞬で完了、待ち時間なし）
+      // SVGは最初から表示状態。イントロオーバーレイ（background: #0a0e1a）が覆っている。
+      // イントロが5秒後にフェードアウトする頃にはSVGは完全に描画済み。
+      simulation.stop();
+      for (let i = 0; i < 300; i++) simulation.tick();
+      fitAll(false);
+      animateParticles();
+      breathe();
+      edgePulse();
+      setTimeout(fadeOutIntro, 3000);
+
+      // フィット後はゆるく動く
+      simulation.alphaDecay(0.005);
+      setTimeout(() => {
+        setInterval(() => {
+          data.nodes.forEach(n => {
+            n.vx += (Math.random() - 0.5) * 0.3;
+            n.vy += (Math.random() - 0.5) * 0.3;
+          });
+          simulation.alpha(0.03).restart();
+        }, 3000);
+      }, 2000);
+
+      // ラベル位置更新（gグループ内なのでデータ座標で配置）
+      function updateLabels() {
+        const k = currentTransform.k || 1;
+        label
+          .attr("x", d => d.x)
+          .attr("y", d => d.y - nodeRadius(connectionCount[d.id] || 1) - LABEL_GAP / k)
+          .attr("font-size", LABEL_SIZE / k);
+      }
+
+      simulation.on("tick", () => {
+        link
+          .attr("x1", d => d.source.x).attr("y1", d => d.source.y)
+          .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+        node.attr("cx", d => d.x).attr("cy", d => d.y);
+        updateLabels();
       });
     });
   </script>

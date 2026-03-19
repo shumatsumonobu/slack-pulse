@@ -1,3 +1,5 @@
 node_modules/
 .env
-graph-data.json
+data/graph-data.json
+data/diagnosis.json
+videos/

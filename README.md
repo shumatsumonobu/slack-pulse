@@ -2,11 +2,13 @@
 
 チームの見えない繋がりを、光で描く
 
-Slackのリアクション・メンション・スレッド返信から、コミュニケーション密度のネットワークグラフ
-
-粒子が多いペアほど密なやり取り。丸が大きい人ほど広い繋がり
+**[Live Demo](https://shumatsumonobu.github.io/slack-pulse/)**
 
 ![demo](screenshots/demo.gif)
+
+Slackのリアクション・メンション・スレッド返信をスコア化し、ネットワークグラフで可視化。粒子が多いペアほど密なやり取り、丸が大きい人ほど広い繋がり。
+
+Gemini AIがグラフ構造を読み取ってチームの健康診断も行う。ハブ・ボトルネック・孤立リスクをターミナル風UIで表示。
 
 ## 組織図には載らないものが見える
 
@@ -14,8 +16,6 @@ Slackのリアクション・メンション・スレッド返信から、コミ
 - **派閥** — 固まって光るクラスタ。チーム間の壁がそのまま形になる
 - **隠れたパイプ** — 部署をまたいで粒子が行き来するペア。組織図にない非公式な橋渡し役
 - **沈黙** — 粒子が飛んでこない小さなノード。気づかなかった距離が見える
-
-コマンド1つで、チームの健康状態が光と動きで浮かび上がる
 
 ## セットアップ
 
@@ -37,33 +37,31 @@ npm install
 cp .env.example .env
 ```
 
-`.env` にSlack Bot TokenとチャンネルIDを設定
+`.env` を編集:
 
 ```
 SLACK_BOT_TOKEN=xoxb-your-token-here
 SLACK_CHANNEL_ID=C01XXXXXXXX
+GEMINI_API_KEY=your-gemini-api-key-here
 ```
 
-チャンネルIDはチャンネル名を右クリック → リンクをコピー → URL末尾の英数字
+- チャンネルID: チャンネル名を右クリック → リンクをコピー → URL末尾の英数字
+- Gemini APIキー: [Google AI Studio](https://aistudio.google.com/apikey) から取得
 
-### データ取得
+### 使い方
 
 ```bash
-# Slackの対象チャンネルで /invite @slack-pulse してから
+# 1. Slackからデータ取得（対象チャンネルで /invite @slack-pulse してから）
 npm run fetch
-```
 
-出力: `graph-data.json`
+# 2. AIでチーム健康診断
+npm run diagnose
 
-`graph-data.json` がなければ同梱のサンプルデータで動く
-
-### 可視化
-
-```bash
+# 3. 可視化
 npm run dev
 ```
 
-ブラウザで http://localhost:3000 を開く
+`data/graph-data.json` がなければ同梱のサンプルデータで動く。`diagnose` もサンプルデータ対応
 
 ### デモ動画の録画
 
@@ -71,7 +69,15 @@ npm run dev
 npm run record
 ```
 
-`screenshots/demo.webm` に1920×1080の15秒動画が出力される（Playwright + Chromium）
+`screenshots/demo.webm` に1920×1080の15秒動画が出力される
+
+### GitHub Pages デプロイ
+
+```bash
+npm run build:docs
+```
+
+`docs/` にデプロイ用ファイルが生成される。GitHub Pages の Source を `main` ブランチの `/docs` に設定
 
 ## スコア算出
 
@@ -81,9 +87,23 @@ npm run record
 
 最重量はスレッド返信。実際の会話の証拠
 
+## AI健康診断
+
+`npm run diagnose` でGemini AIがグラフ構造を分析し、`data/diagnosis.json` を生成。画面右上にターミナル風パネルで表示される。
+
+```
+DIAGNOSIS
+55/100 [要注意]
+> ハブ検出: 田中, 鈴木, 佐藤
+! ボトルネック: 上位3名に集中
+! 孤立リスク: 接続2人以下あり
+> ハブ依存を分散させる
+```
+
 ## 技術構成
 
 - **可視化**: D3.js force-directed graph
+- **AI診断**: Google Gemini AI（structured output）
 - **データ取得**: Slack Web API / Node.js
 - **録画**: Playwright（Chromium headless）
 

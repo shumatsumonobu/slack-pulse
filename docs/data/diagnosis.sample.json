@@ -1,0 +1,40 @@
+{
+  "overall_score": 60,
+  "overall_label": "要注意",
+  "summary": "ハブは強いが孤立者が目立つ",
+  "hubs": [
+    {
+      "name": "田中",
+      "insight": "最も活動的な中核メンバー"
+    },
+    {
+      "name": "鈴木",
+      "insight": "田中と並ぶ重要な情報ハブ"
+    },
+    {
+      "name": "佐藤",
+      "insight": "チームの主要なコミュニケーション源"
+    }
+  ],
+  "risks": [
+    {
+      "type": "isolation",
+      "description": "接続が2人以下の孤立者が存在"
+    },
+    {
+      "type": "bottleneck",
+      "description": "一部のハブに活動が集中している"
+    },
+    {
+      "type": "cluster",
+      "description": "活動量の少ないメンバー層が厚い"
+    }
+  ],
+  "recommendations": [
+    "孤立メンバーへの積極的な関わり",
+    "ハブ以外のメンバーの巻き込み強化",
+    "部門横断的な交流機会の創出"
+  ],
+  "generated_at": "2026-03-19T08:52:40.638Z",
+  "model": "gemini-2.5-flash"
+}

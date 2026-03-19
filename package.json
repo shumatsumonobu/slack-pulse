@@ -4,9 +4,12 @@
   "scripts": {
     "fetch": "node fetch-data.js",
     "dev": "npx serve .",
-    "record": "node record.js"
+    "record": "node record.js",
+    "diagnose": "node diagnose.js",
+    "build:docs": "node build-docs.js"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@slack/web-api": "^7.0.0"
   },
   "devDependencies": {
